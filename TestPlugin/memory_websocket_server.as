@@ -18,7 +18,7 @@ void send_json_response(dictionary &in response)
     return;
     string json, err;
     if (json_stringify(response, json, err)) {
-        log("WS: sending response: " + json);
+        log_console("WS: sending response: " + json);
         g_ws.send_text(json);
     } else {
         log_error("JSON stringify failed: " + err);
@@ -31,19 +31,23 @@ void send_json_response(dictionary &in response)
 // ------------------------------------------------------------
 void handle_open_process(dictionary &in req)
 {
-    
     dictionary res;
-    string name;
-    if (!req.get("process", name))
+    
+    double pid_d;
+    if (!req.get("pid", pid_d))
     {
-        res.set("error", "missing process");
+        res.set("error", "missing pid");
         send_json_response(res);
         return;
     }
-    log("attaching to: " + name);
+    
+    uint pid = uint(pid_d);
+    log_console("attaching to pid: " + pid);
+    
     if (g_proc.alive())
     g_proc.deref();
-    g_proc = ref_process(name);
+    
+    g_proc = ref_process(pid);
     if (!g_proc.alive())
     {
         attached = false;
@@ -58,6 +62,7 @@ void handle_open_process(dictionary &in req)
     }
     send_json_response(res);
 }
+
 
 void handle_close_process()
 {
@@ -177,7 +182,7 @@ void websocket_pump()
         if (is_text)
         {
             
-            log("WS: received text: " + msg);
+            log_console("WS: received text: " + msg);
             dictionary req;
             string err;
             if (json_parse(msg, req, err))
@@ -208,7 +213,7 @@ void websocket_callback(int, int)
 // ------------------------------------------------------------
 int main()
 {
-    log("Starting WebSocket memory server");
+    log_console("Starting WebSocket memory server");
     g_ws = ws_connect("ws://127.0.0.1:9001/memory", 5000);
     if (!g_ws.is_open())
     {
@@ -222,7 +227,7 @@ int main()
         g_ws = ws_t();
         return -1;
     }
-    log("Server running");
+    log_console("Server running");
     return 1;
 }
 
@@ -236,5 +241,5 @@ void on_unload()
     if (g_proc.alive())
     g_proc.deref();
     g_proc = proc_t();
-    log("Server unloaded");
+    log_console("Server unloaded");
 }

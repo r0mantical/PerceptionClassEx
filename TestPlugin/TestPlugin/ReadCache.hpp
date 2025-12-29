@@ -5,6 +5,7 @@
 #include <map>
 #include <queue>
 #include <mutex>
+#include <shared_mutex> 
 
 struct ReadKey {
     uintptr_t address;
@@ -20,8 +21,8 @@ struct CachedBlock {
     // optionally timestamp, validity flags, etc.
 };
 
-static std::map<ReadKey, CachedBlock> g_cache;
-static std::mutex g_cache_mutex;
+extern std::map<ReadKey, CachedBlock> g_cache;
+extern std::shared_mutex g_cache_mutex;
 
 enum class JobType {
     Read,
@@ -34,15 +35,16 @@ struct Job {
     JobType type;
     uintptr_t address;
     std::vector<uint8_t> data; // for write
-    std::string processName;   // for open_process
+    //std::string processName;   // for open_process
+	uint32_t pid;              // for open_process
 };
 
-static std::queue<Job> g_jobs;
-static std::mutex g_jobs_mutex;
-static std::condition_variable g_jobs_cv;
+extern std::queue<Job> g_jobs;
+extern std::mutex g_jobs_mutex;
+extern std::condition_variable g_jobs_cv;
 
-static std::atomic<bool> g_workerRunning{ false };
-static std::thread* g_workerThread = nullptr;
+extern std::atomic<bool> g_workerRunning;
+extern std::thread* g_workerThread;
 
 //void worker_thread();
 bool StartWorker();

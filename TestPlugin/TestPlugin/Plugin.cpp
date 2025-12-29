@@ -17,19 +17,26 @@ void StopWebSocketServer();
 
 std::wstring GetProcessNameFromPid(DWORD dwProcessId);
 
-HANDLE PLUGIN_CC MyOpenProcess(DWORD, BOOL, DWORD dwProcessId)
+HANDLE PLUGIN_CC MyOpenProcess(DWORD dwDesiredAccess, BOOL, DWORD dwProcessId)
 {
-    // For ReClass, any non-null handle is fine as a dummy
-    HANDLE fake = (HANDLE)1;
+    // Log for debugging
+    ReClassPrintConsole(L"[WSMem] MyOpenProcess called for pid %u, access 0x%08X",
+        dwProcessId, dwDesiredAccess);
 
-    std::wstring processNameW = GetProcessNameFromPid(dwProcessId);
-    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
-    std::string processName = conv.to_bytes(processNameW);
+    // Detect process browser enumeration
+    bool isProbe =
+        (dwDesiredAccess == (PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)) ||
+        (dwDesiredAccess == PROCESS_QUERY_LIMITED_INFORMATION);
 
+    if (isProbe) {
+        // Return a fake handle but DO NOT enqueue a job
+        return (HANDLE)1;
+    }
+
+    // Real attach request
     Job job;
     job.type = JobType::OpenProcess;
-    // you probably want to pass process name from GetProcessNameFromPid here
-    job.processName = processName;
+    job.pid = dwProcessId;
 
     {
         std::lock_guard<std::mutex> lock(g_jobs_mutex);
@@ -37,8 +44,9 @@ HANDLE PLUGIN_CC MyOpenProcess(DWORD, BOOL, DWORD dwProcessId)
     }
     g_jobs_cv.notify_one();
 
-    return fake;
+    return (HANDLE)1;
 }
+
 
 BOOL PLUGIN_CC MyCloseProcess(HANDLE)
 {
@@ -79,9 +87,9 @@ PluginInit(
     }
 
 
-    if (!StartWorker()) {
-        return FALSE;
-    }
+    //if (!StartWorker()) {
+    //    return FALSE;
+    //}
 
 
     gTestPluginState = TRUE;
@@ -105,8 +113,11 @@ PluginStateChange(
     {
         ReClassPrintConsole( L"[WSMem] Enabled!" );
 
+
+
 		// start the server
-        StartWebSocketServer();
+        StartWebSocketServer(); // sets g_wsRunning, creates g_context
+        StartWorker(); // afterwards, now SendWebSocketCommand can succeed 
     }
     else
     {
@@ -317,8 +328,7 @@ PluginSettingsDlg(
 }
 
 BOOL
-PLUGIN_CC
-ReadCallback(
+PLUGIN_CC ReadCallback(
     IN LPVOID Address,
     IN LPVOID Buffer,
     IN SIZE_T Size,
@@ -327,9 +337,8 @@ ReadCallback(
 {
     uintptr_t addr = (uintptr_t)Address;
 
-    // Try cache first
     {
-        std::lock_guard<std::mutex> lock(g_cache_mutex);
+        std::shared_lock<std::shared_mutex> lock(g_cache_mutex); // read only lock
         ReadKey key{ addr, Size };
         auto it = g_cache.find(key);
         if (it != g_cache.end() && it->second.data.size() == Size) {
@@ -339,12 +348,13 @@ ReadCallback(
         }
     }
 
-    // Cache miss: enqueue async read, return zeros immediately
+    // Cache miss: enqueue async read, return zeros
     {
         Job job;
         job.type = JobType::Read;
         job.address = addr;
-        job.data.resize(Size); // only used for length here
+        job.data.resize(Size);
+
         {
             std::lock_guard<std::mutex> lock(g_jobs_mutex);
             g_jobs.push(std::move(job));
@@ -353,9 +363,10 @@ ReadCallback(
     }
 
     ZeroMemory(Buffer, Size);
-    if (BytesRead) *BytesRead = Size; // or 0 if you want to signal "not valid yet"
+    if (BytesRead) *BytesRead = Size;
     return TRUE;
 }
+
 
 BOOL
 PLUGIN_CC
@@ -370,7 +381,7 @@ WriteCallback(
 
     // Update cache optimistically
     {
-        std::lock_guard<std::mutex> lock(g_cache_mutex);
+		std::unique_lock<std::shared_mutex> lock(g_cache_mutex); // write enabled lock
         ReadKey key{ addr, Size };
         CachedBlock block;
         block.data.assign((uint8_t*)Buffer, (uint8_t*)Buffer + Size);
