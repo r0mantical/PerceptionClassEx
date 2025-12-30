@@ -7,7 +7,7 @@
 // ------------------------------------------------------------
 ws_t   g_ws;
 proc_t g_proc;
-bool attached = false;
+bool   attached = false;
 int    g_callback_id = 0;
 
 // ------------------------------------------------------------
@@ -17,6 +17,7 @@ void send_json_response(dictionary &in response)
 {
     if (!g_ws.is_open())
     return;
+    
     string json, err;
     if (json_stringify(response, json, err)) {
         //log_console("WS: sending response: " + json);
@@ -26,6 +27,40 @@ void send_json_response(dictionary &in response)
     }
 }
 
+// ------------------------------------------------------------
+// Process attach helper
+// ------------------------------------------------------------
+bool ensure_attached_for_pid(uint pid, dictionary &inout res)
+{
+    // No pid supplied: rely on existing attachment
+    if (pid == 0) {
+        if (!attached || !g_proc.alive()) {
+            attached = false;
+            res.set("error", "not attached");
+            return false;
+        }
+        return true;
+    }
+    
+    // Already attached to this pid
+    if (attached && g_proc.alive() && g_proc.pid() == pid)
+    return true;
+    
+    // Re-attach to the requested pid
+    if (g_proc.alive())
+    g_proc.deref();
+    g_proc = ref_process(pid);
+    
+    if (!g_proc.alive()) {
+        attached = false;
+        res.set("error", "attach failed");
+        return false;
+    }
+    
+    attached = true;
+    res.set("attached_pid", double(g_proc.pid()));
+    return true;
+}
 
 // ------------------------------------------------------------
 // Command handlers
@@ -58,18 +93,19 @@ void handle_open_process(dictionary &in req)
     {
         attached = true;
         res.set("result", "attached");
-        res.set("pid", double(g_proc.pid()));
+        res.set("pid",  double(g_proc.pid()));
         res.set("base", double(g_proc.base_address()));
     }
     send_json_response(res);
 }
-
 
 void handle_close_process()
 {
     if (g_proc.alive())
     g_proc.deref();
     g_proc = proc_t();
+    attached = false;
+    
     dictionary res;
     res.set("result", "detached");
     send_json_response(res);
@@ -78,13 +114,18 @@ void handle_close_process()
 void handle_read(dictionary &in req)
 {
     dictionary res;
-    if (!attached || !g_proc.alive())
+    
+    // Optional pid: use per-read if provided, otherwise current attachment
+    double pid_d = 0;
+    bool has_pid = req.get("pid", pid_d);
+    uint pid = has_pid ? uint(pid_d) : 0;
+    
+    if (!ensure_attached_for_pid(pid, res))
     {
-        attached = false;
-        res.set("error", "not attached");
         send_json_response(res);
         return;
     }
+    
     double addr_d, size_d;
     if (!req.get("address", addr_d) || !req.get("size", size_d))
     {
@@ -92,14 +133,18 @@ void handle_read(dictionary &in req)
         send_json_response(res);
         return;
     }
+    
     uint64 addr = uint64(addr_d);
-    uint size = uint(size_d);
-    if (size == 0 || size > 4096)
+    uint size   = uint(size_d);
+    
+    // Sanity check only; allow large batched reads for caching
+    if (size == 0 || size > 1048576) // 1 MB upper bound for safety
     {
         res.set("error", "invalid size");
         send_json_response(res);
         return;
     }
+    
     array<uint8> data;
     g_proc.rvm(addr, size, data);
     if (data.length() != size)
@@ -108,11 +153,13 @@ void handle_read(dictionary &in req)
         send_json_response(res);
         return;
     }
+    
     // Convert array<uint8> → string for util_hex_encode
     string raw;
     raw.resize(data.length());
     for (uint i = 0; i < data.length(); i++)
     raw[i] = uint8(data[i]);
+    
     res.set("data", util_hex_encode(raw));
     send_json_response(res);
 }
@@ -120,13 +167,18 @@ void handle_read(dictionary &in req)
 void handle_write(dictionary &in req)
 {
     dictionary res;
-    if (!attached || !g_proc.alive())
+    
+    // Optional pid for write as well
+    double pid_d = 0;
+    bool has_pid = req.get("pid", pid_d);
+    uint pid = has_pid ? uint(pid_d) : 0;
+    
+    if (!ensure_attached_for_pid(pid, res))
     {
-        attached = false;
-        res.set("error", "not attached");
         send_json_response(res);
         return;
     }
+    
     double addr_d;
     string hex;
     if (!req.get("address", addr_d) || !req.get("data", hex))
@@ -135,6 +187,7 @@ void handle_write(dictionary &in req)
         send_json_response(res);
         return;
     }
+    
     string raw;
     string err;
     if (!util_hex_decode(hex, raw, err))
@@ -143,15 +196,18 @@ void handle_write(dictionary &in req)
         send_json_response(res);
         return;
     }
+    
     // Convert string → array<uint8>
     array<uint8> bytes;
     bytes.resize(raw.length());
     for (uint i = 0; i < raw.length(); i++)
     bytes[i] = uint8(raw[i]);
+    
     if (g_proc.wvm(uint64(addr_d), bytes))
     res.set("result", "write ok");
     else
     res.set("error", "write failed");
+    
     send_json_response(res);
 }
 
@@ -160,6 +216,7 @@ void handle_request(dictionary &in req)
     string cmd;
     if (!req.get("cmd", cmd))
     return;
+    
     if      (cmd == "open_process")  handle_open_process(req);
     else if (cmd == "close_process") handle_close_process();
     else if (cmd == "read")          handle_read(req);
@@ -175,19 +232,20 @@ void websocket_pump()
     return;
     
     string msg;
-    bool is_text = false;
+    bool is_text   = false;
     bool is_closed = false;
     
     while (g_ws.poll(msg, is_text, is_closed))
     {
         if (is_text)
         {
-            
             //log_console("WS: received text: " + msg);
             dictionary req;
             string err;
             if (json_parse(msg, req, err))
             handle_request(req);
+            else
+            log_error("JSON parse error: " + err);
         }
         if (is_closed)
         break;
@@ -198,11 +256,12 @@ void websocket_pump()
         if (g_proc.alive())
         g_proc.deref();
         g_proc = proc_t();
+        attached = false;
+        
         g_ws.close();
         g_ws = ws_t();
     }
 }
-
 
 void websocket_callback(int, int)
 {
@@ -221,6 +280,7 @@ int main()
         log_error("WebSocket connect failed");
         return -1;
     }
+    
     g_callback_id = register_callback(websocket_callback, 1, 0);
     if (g_callback_id == 0)
     {
@@ -228,6 +288,7 @@ int main()
         g_ws = ws_t();
         return -1;
     }
+    
     log_console("Server running");
     return 1;
 }
@@ -236,12 +297,15 @@ void on_unload()
 {
     if (g_callback_id != 0)
     unregister_callback(g_callback_id);
+    
     if (g_ws.is_open())
     g_ws.close();
     g_ws = ws_t();
+    
     if (g_proc.alive())
     g_proc.deref();
     g_proc = proc_t();
+    
+    attached = false;
     log_console("Server unloaded");
 }
-

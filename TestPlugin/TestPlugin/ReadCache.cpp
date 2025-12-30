@@ -2,12 +2,11 @@
 #include "WebSocketServer.hpp"
 
 std::map<ReadKey, CachedBlock> g_cache;
-std::shared_mutex g_cache_mutex;
+std::shared_mutex              g_cache_mutex;
 
-
-std::queue<Job> g_jobs;
-std::mutex g_jobs_mutex;
-std::condition_variable g_jobs_cv;
+std::queue<Job>                g_jobs;
+std::mutex                     g_jobs_mutex;
+std::condition_variable        g_jobs_cv;
 
 std::atomic<bool> g_workerRunning{ false };
 std::thread* g_workerThread = nullptr;
@@ -32,7 +31,7 @@ void worker_thread()
 
         if (!haveJob) {
             // No work to do right now, back off a bit
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
@@ -56,19 +55,17 @@ void worker_thread()
         }
 
         case JobType::Read: {
+            // job.read.address = requested start address
+            // job.read.size    = requested size (may cross pages)
 
-            // job.read.address = requested start address (may be anywhere in the page)
-            // job.read.size = requested size (may be less than a full page)
-
-            const uintptr_t addr = job.read.address;
-            const size_t req_size = job.read.size;
-            const uintptr_t page_base = PAGE_BASE(addr);
-            const size_t offset = static_cast<size_t>(addr - page_base);
+            const uintptr_t req_addr = job.read.address;
+            const size_t    req_size = job.read.size;
 
             char buf[128];
             snprintf(buf, sizeof(buf),
-                "{\"cmd\":\"read\",\"address\":%llu,\"size\":%llu}",
-                (unsigned long long)addr,
+                "{\"cmd\":\"read\",\"pid\":%u,\"address\":%llu,\"size\":%llu}",
+                job.pid,
+                (unsigned long long)req_addr,
                 (unsigned long long)req_size);
             cmd = buf;
 
@@ -88,47 +85,65 @@ void worker_thread()
                         }
 
                         if (!bytes.empty()) {
-                            ReadKey key(job.read.address);
 
-                            std::unique_lock<std::shared_mutex> lock(g_cache_mutex);
-                            CachedBlock& block = g_cache[key];
+                            // Clamp to what we actually requested, just in case
+                            size_t total_len = bytes.size();
+                            if (total_len > req_size)
+                                total_len = req_size;
 
-                            // Copy only upto as much as fits into the page
-                            size_t to_copy = bytes.size();
-                            if (to_copy > PAGE_SIZE)
-                                to_copy = PAGE_SIZE;
+                            size_t pos_bytes = 0;
+                            const auto now = std::chrono::steady_clock::now();
 
-                            // and clamp page boundary
-                            if (offset + to_copy > PAGE_SIZE)
-                                to_copy = PAGE_SIZE - offset;
+                            while (pos_bytes < total_len) {
+                                uintptr_t cur_addr = req_addr + pos_bytes;
+                                uintptr_t page_base = PAGE_BASE(cur_addr);
+                                size_t    offset =
+                                    static_cast<size_t>(cur_addr - page_base);
 
-                            if (to_copy > 0) {
-                                memcpy(block.data + offset, bytes.data(), to_copy);
+                                size_t page_cap = PAGE_SIZE - offset;
+                                size_t remaining = total_len - pos_bytes;
+                                size_t to_copy =
+                                    (remaining < page_cap) ? remaining : page_cap;
 
-                                const auto now = std::chrono::steady_clock::now();
-                                block.timestamp = now;
+                                ReadKey key(page_base);
 
-                                // Merge [offset, offset + to_copy) into existing valid window
-                                if (block.valid_length == 0) {
-                                    // No previous data: this region becomes the valid window
-                                    block.valid_start = offset;
-                                    block.valid_length = to_copy;
+                                {
+                                    std::unique_lock<std::shared_mutex> lock(g_cache_mutex);
+                                    CachedBlock& block = g_cache[key];
+
+                                    // Copy into the page buffer at the correct offset
+                                    memcpy(block.data + offset,
+                                        bytes.data() + pos_bytes,
+                                        to_copy);
+
+                                    block.timestamp = now;
+
+                                    // Merge [offset, offset+to_copy) into existing valid window
+                                    if (block.valid_length == 0) {
+                                        // No previous valid data in this page
+                                        block.valid_start = offset;
+                                        block.valid_length = to_copy;
+                                    }
+                                    else {
+                                        size_t old_start = block.valid_start;
+                                        size_t old_end = block.valid_start + block.valid_length;
+                                        size_t new_start = offset;
+                                        size_t new_end = offset + to_copy;
+
+                                        size_t merged_start =
+                                            (old_start < new_start) ? old_start : new_start;
+                                        size_t merged_end =
+                                            (old_end > new_end) ? old_end : new_end;
+
+                                        if (merged_end > PAGE_SIZE)
+                                            merged_end = PAGE_SIZE;
+
+                                        block.valid_start = merged_start;
+                                        block.valid_length = merged_end - merged_start;
+                                    }
                                 }
-                                else {
-                                    size_t old_start = block.valid_start;
-                                    size_t old_end = block.valid_start + block.valid_length;
-                                    size_t new_start = offset;
-                                    size_t new_end = offset + to_copy;
 
-                                    size_t merged_start = min(old_start, new_start);
-                                    size_t merged_end = max(old_end, new_end);
-
-                                    if (merged_end > PAGE_SIZE)
-                                        merged_end = PAGE_SIZE;
-
-                                    block.valid_start = merged_start;
-                                    block.valid_length = merged_end - merged_start;
-                                }
+                                pos_bytes += to_copy;
                             }
                         }
                     }
@@ -148,9 +163,11 @@ void worker_thread()
 
             char bufw[128];
             snprintf(bufw, sizeof(bufw),
-                "{\"cmd\":\"write\",\"address\":%llu,\"data\":\"%s\"}",
+                "{\"cmd\":\"write\",\"pid\":%u,\"address\":%llu,\"data\":\"%s\"}",
+                job.pid,
                 (unsigned long long)job.write.address,
                 hex.c_str());
+
             cmd = bufw;
             SendWebSocketCommand(cmd, response, 100);
             break;
@@ -160,7 +177,6 @@ void worker_thread()
 
     LOG("LEAVING WORKER THREAD");
 }
-
 
 bool StartWorker()
 {
@@ -172,7 +188,6 @@ bool StartWorker()
 
     return g_workerThread != nullptr;
 }
-
 
 void StopWorker()
 {
@@ -186,4 +201,3 @@ void StopWorker()
     delete g_workerThread;
     g_workerThread = nullptr;
 }
-
