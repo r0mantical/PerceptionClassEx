@@ -366,6 +366,11 @@ PluginSettingsDlg(
     return FALSE;
 }
 
+const auto pushJob = [](Job job) {
+    std::lock_guard<std::mutex> lock(g_jobs_mutex);
+    g_jobs.push(std::move(job));
+};
+
 BOOL
 PLUGIN_CC ReadCallback(
     IN LPVOID Address,
@@ -382,39 +387,103 @@ PLUGIN_CC ReadCallback(
 	}
 
     uintptr_t addr = (uintptr_t)Address;
+    uint8_t* out = static_cast<uint8_t*>(Buffer);
 
-    {
-        std::shared_lock<std::shared_mutex> lock(g_cache_mutex); // read only lock to the cache
-        ReadKey key{ addr, Size };
-        auto it = g_cache.find(key);
-        if (it != g_cache.end() && it->second.data.size() == Size) {
-            memcpy(Buffer, it->second.data.data(), Size);
-            if (BytesRead) *BytesRead = Size;
-            return TRUE;
-        }
-    }
+    SIZE_T remaining = Size;
 
-    // Todo: improve this behaviour for more "live" use cases than reclass
-	// it's kind of hard to do an async read properly without blocking the caller here since our interface with reclass is sync.
-    // maybe there is something clever to do
-    // 
-    // But for now:
-    // Cache miss: enqueue async read, return zeros
-    {
-        Job job;
-        job.type = JobType::Read;
-        job.address = addr;
-        job.pid = pid; // we include the pid with every request now to avoid desync of the attached process
-        job.data.resize(Size);
+    SIZE_T total_copied = 0;
+
+	bool refreshRequested = false;
+
+    while (remaining) {
+
+        uintptr_t page_base = PAGE_BASE(addr);
+        size_t page_offset = static_cast<size_t>(addr - page_base);
+        size_t chunk = PAGE_SIZE - page_offset;
+        if (chunk > remaining)
+            chunk = remaining;
+
+        bool satisfied_from_cache = false;
 
         {
-            std::lock_guard<std::mutex> lock(g_jobs_mutex);
-            g_jobs.push(std::move(job));
+            std::shared_lock<std::shared_mutex> lock(g_cache_mutex);
+
+            ReadKey key{ page_base };
+            auto it = g_cache.find(key);
+            if (it != g_cache.end()) {
+                CachedBlock& block = it->second;
+
+                // Expired?
+                if (!DEFAULT_CACHE_EXPIRY_HANDLER(block.timestamp)) {
+                    // force a refresh but return the expired data anyways
+					refreshRequested = true;
+                }
+				// we will also return the expired data for now, as it is better than nothing
+                
+                // Check if this chunk is fully covered by valid region
+                size_t needed_start = page_offset;
+                size_t needed_end = page_offset + chunk;
+#if PARANOID
+                if (block.valid_start + chunk > PAGE_SIZE) {
+                    LOG("Cache logic error: valid region too small for requested chunk");
+                    break;
+                }
+#endif
+                size_t valid_end = block.valid_start + block.valid_length;
+
+                if (needed_start >= block.valid_start &&
+                    needed_end <= valid_end)
+                {
+                    const uint8_t* src = block.data + page_offset;
+                    memcpy(out, src, chunk);
+                    satisfied_from_cache = true;
+                    total_copied += chunk;
+                }
+                
+            }
         }
+
+        if (!satisfied_from_cache || refreshRequested) {
+            // Cache miss or stale: enqueue async read for this page
+            Job job;
+            job.type = JobType::Read;
+
+#if FULL_PAGE_FETCH
+            job.read.address = page_base;
+            job.read.size = PAGE_SIZE;
+#else
+			job.read.address = addr;
+			job.read.size = chunk;
+#endif
+            job.pid = pid; // we include the pid with every request now to avoid desync of the attached process
+
+
+            //{
+            //    std::lock_guard<std::mutex> lock(g_jobs_mutex);
+            //    g_jobs.push(std::move(job));
+            //}
+            pushJob(job);
+
+            // Todo: improve this behaviour for more "live" use cases than reclass
+            // it's kind of hard to do an async read properly without blocking the caller here since our interface with reclass is sync.
+            // maybe there is something clever to do
+            // 
+            // But for now:
+            // Cache miss: enqueue async read, return zeros
+            // on cache miss we return null at the moment.
+            // With reclass this is fine because it will probably come in next frame
+            ZeroMemory(out, chunk);
+            total_copied += chunk;
+        }
+
+        addr += chunk;
+        out += chunk;
+        remaining -= chunk;
     }
-    // on cache miss we return null at the moment. With reclass this is fine because it will probably come in next frame
-    ZeroMemory(Buffer, Size);
-    if (BytesRead) *BytesRead = Size;
+
+
+
+    if (BytesRead) *BytesRead = total_copied;
     return TRUE;
 }
 
@@ -437,33 +506,30 @@ WriteCallback(
 
     uintptr_t addr = (uintptr_t)Address;
 
-    // Update cache optimistically
-    {
-		std::unique_lock<std::shared_mutex> lock(g_cache_mutex); // write enabled lock
-        ReadKey key{ addr, Size };
-        CachedBlock block;
-        block.data.assign((uint8_t*)Buffer, (uint8_t*)Buffer + Size);
-        g_cache[key] = std::move(block);
-    }
+    // todo: update this for paged cache for better responsiveness
+  //  // Update cache optimistically
+  //  {
+		//std::unique_lock<std::shared_mutex> lock(g_cache_mutex); // write enabled lock
+  //      ReadKey key(addr);
+  //      CachedBlock block;
+  //      block.data.assign((uint8_t*)Buffer, (uint8_t*)Buffer + Size);
+  //      g_cache[key] = std::move(block);
+  //  }
 
     // Enqueue async write
     {
         Job job;
         job.type = JobType::Write;
-        job.address = addr;
+        job.write.address = addr;
         job.pid = pid; // we include the pid with every request now to avoid desync of the attached process
         job.data.assign((uint8_t*)Buffer, (uint8_t*)Buffer + Size);
 
-        {
-            std::lock_guard<std::mutex> lock(g_jobs_mutex);
-            g_jobs.push(std::move(job));
-        }
+		pushJob(job);
     }
 
     if (BytesWritten) *BytesWritten = Size;
     return TRUE;
 }
-
 
 // Helper function to get process name from PID
 std::wstring GetProcessNameFromPid(DWORD dwProcessId)
