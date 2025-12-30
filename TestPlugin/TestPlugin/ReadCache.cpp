@@ -69,86 +69,100 @@ void worker_thread()
                 (unsigned long long)req_size);
             cmd = buf;
 
-            if (SendWebSocketCommand(cmd, response, 100)) {
-                auto pos = response.find("\"data\":\"");
-                if (pos != std::string::npos) {
-                    pos += 8;
-                    auto end = response.find("\"", pos);
-                    if (end != std::string::npos) {
-                        std::string hex = response.substr(pos, end - pos);
-                        std::vector<uint8_t> bytes;
-                        bytes.reserve(hex.size() / 2);
-                        for (size_t i = 0; i + 1 < hex.size(); i += 2) {
-                            unsigned int b = 0;
-                            sscanf(hex.c_str() + i, "%2x", &b);
-                            bytes.push_back((uint8_t)b);
-                        }
+            if (!SendWebSocketCommand(cmd, response, 200)) {
+                LOG(L"Read job failed: SendWebSocketCommand returned false (pid=%u, addr=0x%llX, size=%llu)",
+                    job.pid, (unsigned long long)req_addr, (unsigned long long)req_size);
+                break;
+            }
+            if (response.empty()) {
+                LOG(L"Read job failed: empty response (pid=%u, addr=0x%llX, size=%llu)",
+                    job.pid, (unsigned long long)req_addr, (unsigned long long)req_size);
+                break;
+            }
 
-                        if (!bytes.empty()) {
+            auto pos = response.find("\"data\":\"");
+            if (pos == std::string::npos) {
+                LOG(L"Read job failed: no data field in response: %hs", response.c_str());
+                break;
+            }
 
-                            // Clamp to what we actually requested, just in case
-                            size_t total_len = bytes.size();
-                            if (total_len > req_size)
-                                total_len = req_size;
+            pos += 8;
+            auto end = response.find("\"", pos);
+            if (end != std::string::npos) {
+                std::string hex = response.substr(pos, end - pos);
+                std::vector<uint8_t> bytes;
+                bytes.reserve(hex.size() / 2);
+                for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+                    unsigned int b = 0;
+                    sscanf(hex.c_str() + i, "%2x", &b);
+                    bytes.push_back((uint8_t)b);
+                }
 
-                            size_t pos_bytes = 0;
-                            const auto now = std::chrono::steady_clock::now();
+                if (!bytes.empty()) {
 
-                            while (pos_bytes < total_len) {
-                                uintptr_t cur_addr = req_addr + pos_bytes;
-                                uintptr_t page_base = PAGE_BASE(cur_addr);
-                                size_t    offset =
-                                    static_cast<size_t>(cur_addr - page_base);
+                    // Clamp to what we actually requested, just in case
+                    size_t total_len = bytes.size();
+                    if (total_len > req_size)
+                        total_len = req_size;
 
-                                size_t page_cap = PAGE_SIZE - offset;
-                                size_t remaining = total_len - pos_bytes;
-                                size_t to_copy =
-                                    (remaining < page_cap) ? remaining : page_cap;
+                    size_t pos_bytes = 0;
+                    const auto now = std::chrono::steady_clock::now();
 
-                                ReadKey key(page_base);
+                    while (pos_bytes < total_len) {
+                        uintptr_t cur_addr = req_addr + pos_bytes;
+                        uintptr_t page_base = PAGE_BASE(cur_addr);
+                        size_t    offset =
+                            static_cast<size_t>(cur_addr - page_base);
 
-                                {
-                                    std::unique_lock<std::shared_mutex> lock(g_cache_mutex);
-                                    CachedBlock& block = g_cache[key];
+                        size_t page_cap = PAGE_SIZE - offset;
+                        size_t remaining = total_len - pos_bytes;
+                        size_t to_copy =
+                            (remaining < page_cap) ? remaining : page_cap;
 
-                                    // Copy into the page buffer at the correct offset
-                                    memcpy(block.data + offset,
-                                        bytes.data() + pos_bytes,
-                                        to_copy);
+                        ReadKey key(page_base);
 
-                                    block.timestamp = now;
+                        {
+                            std::unique_lock<std::shared_mutex> lock(g_cache_mutex);
+                            CachedBlock& block = g_cache[key];
 
-                                    // Merge [offset, offset+to_copy) into existing valid window
-                                    if (block.valid_length == 0) {
-                                        // No previous valid data in this page
-                                        block.valid_start = offset;
-                                        block.valid_length = to_copy;
-                                    }
-                                    else {
-                                        size_t old_start = block.valid_start;
-                                        size_t old_end = block.valid_start + block.valid_length;
-                                        size_t new_start = offset;
-                                        size_t new_end = offset + to_copy;
+                            // Copy into the page buffer at the correct offset
+                            memcpy(block.data + offset,
+                                bytes.data() + pos_bytes,
+                                to_copy);
 
-                                        size_t merged_start =
-                                            (old_start < new_start) ? old_start : new_start;
-                                        size_t merged_end =
-                                            (old_end > new_end) ? old_end : new_end;
+                            block.timestamp = now;
 
-                                        if (merged_end > PAGE_SIZE)
-                                            merged_end = PAGE_SIZE;
+                            // Merge [offset, offset+to_copy) into existing valid window
+                            if (block.valid_length == 0) {
+                                // No previous valid data in this page
+                                block.valid_start = offset;
+                                block.valid_length = to_copy;
+                            }
+                            else {
+                                size_t old_start = block.valid_start;
+                                size_t old_end = block.valid_start + block.valid_length;
+                                size_t new_start = offset;
+                                size_t new_end = offset + to_copy;
 
-                                        block.valid_start = merged_start;
-                                        block.valid_length = merged_end - merged_start;
-                                    }
-                                }
+                                size_t merged_start =
+                                    (old_start < new_start) ? old_start : new_start;
+                                size_t merged_end =
+                                    (old_end > new_end) ? old_end : new_end;
 
-                                pos_bytes += to_copy;
+                                if (merged_end > PAGE_SIZE)
+                                    merged_end = PAGE_SIZE;
+
+                                block.valid_start = merged_start;
+                                block.valid_length = merged_end - merged_start;
                             }
                         }
+
+                        pos_bytes += to_copy;
                     }
                 }
             }
+                
+            
             break;
         }
 

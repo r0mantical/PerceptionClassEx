@@ -1,6 +1,6 @@
 // WebSocket Memory Server for Perception.cx
 // Safe, callback-correct, engine-compliant implementation
-// Script Interface version 1.0.0.1 (make sure it matches your plugin)
+// Script Interface version 1.0.0.2 (make sure it matches your plugin)
 
 // ------------------------------------------------------------
 // Globals (value types, never compared to null)
@@ -138,7 +138,8 @@ void handle_read(dictionary &in req)
     uint size   = uint(size_d);
     
     // Sanity check only; allow large batched reads for caching
-    if (size == 0 || size > 1048576) // 1 MB upper bound for safety
+    const uint MAX_READ_SIZE = 1024 * 1024; // 1 MB
+    if (size == 0 || size > MAX_READ_SIZE)
     {
         res.set("error", "invalid size");
         send_json_response(res);
