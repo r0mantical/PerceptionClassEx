@@ -1,5 +1,6 @@
 // WebSocket Memory Server for Perception.cx
 // Safe, callback-correct, engine-compliant implementation
+// Script Interface version 1.0.0.1 (make sure it matches your plugin)
 
 // ------------------------------------------------------------
 // Globals (value types, never compared to null)
@@ -243,3 +244,4 @@ void on_unload()
     g_proc = proc_t();
     log_console("Server unloaded");
 }
+

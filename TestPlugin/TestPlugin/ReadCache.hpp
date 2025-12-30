@@ -16,9 +16,24 @@ struct ReadKey {
     }
 };
 
+// timestamp type for cache expiry
+typedef std::chrono::steady_clock::time_point cache_timestamp;
+
+// cache expiring configuration. Tweak as needed for performance vs freshness
+constexpr std::chrono::milliseconds CACHE_EXPIRY_DURATION(10); // 10ms expiry for now
+
+// the function which determines if a cache entry is expired
+typedef bool (*cache_expiry_handler)(const cache_timestamp& timestamp);
+constexpr cache_expiry_handler DEFAULT_CACHE_EXPIRY_HANDLER =
+    [](const cache_timestamp& timestamp) {
+        return (std::chrono::steady_clock::now() - timestamp) > CACHE_EXPIRY_DURATION;
+    };
+
 struct CachedBlock {
     std::vector<uint8_t> data;
     // optionally timestamp, validity flags, etc.
+    //uint64_t protection_flags; // todo
+    cache_timestamp timestamp;
 };
 
 extern std::map<ReadKey, CachedBlock> g_cache;

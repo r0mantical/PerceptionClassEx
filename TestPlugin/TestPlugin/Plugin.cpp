@@ -18,6 +18,23 @@ void StopWebSocketServer();
 std::wstring GetProcessNameFromPid(DWORD dwProcessId);
 
 
+// this sends off an async request to the script client to open a process handle
+// We will call this whenever OpenProcess is called with non-probe access
+// if needed we can also call this if our cached pid ends up not being equal to the current attached pid.
+// but that may not be needed so we will wait to see first if reclass handles attachment state fine already for our needs.
+void RequestNewProcess(DWORD dwProcessId)
+{
+    
+    Job job;
+    job.type = JobType::OpenProcess;
+    job.pid = dwProcessId;
+
+    {
+        std::lock_guard<std::mutex> lock(g_jobs_mutex);
+        g_jobs.push(std::move(job));
+    }
+}
+
 // we replace "real" handles here with a psudohandle
 // returns the pid as a psudohandle
 HANDLE PLUGIN_CC MyOpenProcess(IN DWORD dwDesiredAccess, IN BOOL bInheritHandle, IN DWORD dwProcessId)
@@ -37,20 +54,14 @@ HANDLE PLUGIN_CC MyOpenProcess(IN DWORD dwDesiredAccess, IN BOOL bInheritHandle,
 		// todo: maybe verify that the process actually exists?
 		// not needed until we replace process iteration with a remote request
 
-        return (HANDLE)dwProcessId;
+		return (HANDLE)dwProcessId; // ideally I would like to differentiate this from the psudohandle returned on real attach.
     }
 
     // Real attach request
-    Job job;
-    job.type = JobType::OpenProcess;
-    job.pid = dwProcessId;
+	RequestNewProcess(dwProcessId);
 
-    {
-        std::lock_guard<std::mutex> lock(g_jobs_mutex);
-        g_jobs.push(std::move(job));
-    }
 
-    // two will represent that we "actually" attached
+	// by returning the pid as a psudohandle we can identify it later in Read/Write operations
     return (HANDLE)dwProcessId;
 }
 
@@ -97,7 +108,7 @@ PluginInit(
 )
 {
     wcscpy_s( lpRCInfo->Name, L"Websocket Memory" );
-    wcscpy_s( lpRCInfo->Version, L"1.0.0.0" );
+    wcscpy_s( lpRCInfo->Version, L"1.0.0.1" );
     wcscpy_s( lpRCInfo->About, L"Access your memory using websockets" );
     lpRCInfo->DialogId = IDD_SETTINGS_DLG;
 
@@ -363,10 +374,17 @@ PLUGIN_CC ReadCallback(
     OUT PSIZE_T BytesRead
 )
 {
+    //ReClassGetProcessHandle() returns the pid also
+    DWORD pid = ReClassGetProcessId();
+    if(pid == 0 || Address == 0 || Buffer == 0 || Size == 0) {
+        if (BytesRead) *BytesRead = 0;
+        return FALSE;
+	}
+
     uintptr_t addr = (uintptr_t)Address;
 
     {
-        std::shared_lock<std::shared_mutex> lock(g_cache_mutex); // read only lock
+        std::shared_lock<std::shared_mutex> lock(g_cache_mutex); // read only lock to the cache
         ReadKey key{ addr, Size };
         auto it = g_cache.find(key);
         if (it != g_cache.end() && it->second.data.size() == Size) {
@@ -376,11 +394,17 @@ PLUGIN_CC ReadCallback(
         }
     }
 
+    // Todo: improve this behaviour for more "live" use cases than reclass
+	// it's kind of hard to do an async read properly without blocking the caller here since our interface with reclass is sync.
+    // maybe there is something clever to do
+    // 
+    // But for now:
     // Cache miss: enqueue async read, return zeros
     {
         Job job;
         job.type = JobType::Read;
         job.address = addr;
+        job.pid = pid; // we include the pid with every request now to avoid desync of the attached process
         job.data.resize(Size);
 
         {
@@ -388,7 +412,7 @@ PLUGIN_CC ReadCallback(
             g_jobs.push(std::move(job));
         }
     }
-
+    // on cache miss we return null at the moment. With reclass this is fine because it will probably come in next frame
     ZeroMemory(Buffer, Size);
     if (BytesRead) *BytesRead = Size;
     return TRUE;
@@ -404,6 +428,13 @@ WriteCallback(
     OUT PSIZE_T BytesWritten
 )
 {
+    //ReClassGetProcessHandle() returns the pid also
+    DWORD pid = ReClassGetProcessId();
+    if (pid == 0 || Address == 0 || Buffer == 0 || Size == 0) {
+        if (BytesWritten) *BytesWritten = 0;
+        return FALSE;
+    }
+
     uintptr_t addr = (uintptr_t)Address;
 
     // Update cache optimistically
@@ -420,6 +451,7 @@ WriteCallback(
         Job job;
         job.type = JobType::Write;
         job.address = addr;
+        job.pid = pid; // we include the pid with every request now to avoid desync of the attached process
         job.data.assign((uint8_t*)Buffer, (uint8_t*)Buffer + Size);
 
         {
