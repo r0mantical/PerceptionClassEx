@@ -4,6 +4,11 @@
 
     Connect to any process memory using the perception.cx scripting api for stealth. Very handy for reverse engineering things that do not want to be seen. IPC Achieved using websockets. The reclass plugin in this repository acts as a websocket server, and the provided script connects to it to provide process memory access.
 
+## Build Requirements
+
+1. Install and integrate vcpkg
+2. install libwebsockets `vcpkg install libwebsockets:x64-windows-static`
+
 # ReClassDark
 
 Dark version of ReClassEx with some fixes
