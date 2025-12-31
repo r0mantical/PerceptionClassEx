@@ -1,6 +1,6 @@
 # PerceptClassEx
 
-![PerceptClassEx](./img/screenshot.PNG "PerceptClassEx")
+![PerceptClassEx](./img/screenshot.png "PerceptClassEx")
 
     Connect to any process memory using the perception.cx scripting api for stealth. Very handy for reverse engineering things that do not want to be seen. IPC Achieved using websockets. The reclass plugin in this repository acts as a websocket server, and the provided script connects to it to provide process memory access.
 
@@ -8,25 +8,30 @@
 
 1. Install and integrate vcpkg
 2. install libwebsockets `vcpkg install libwebsockets:x64-windows-static`
+3. Using the visual studio installer make sure you have the **MFC libraries** for the correct build tool version, or change the build tools to the one you have installed. Get the NON spectre version for it to match the current project settings. Currently we are using `14.44` for `v143` Visual studio 2022. ![MFCLibrary](./img/match_libs.png "MFC Library Instructions")
 
-# ReClassDark
+# Forked From these repositories:
+
+    Below is the readme from the original repositories
+
+## ReClassDark
 
 Dark version of ReClassEx with some fixes
 
 ![ReClassDark](https://raw.githubusercontent.com/Nixer1337/ReClassDark/master/Images/ReClassDark.png "ReClassDark")
 
-## What's new
+### What's new
 - Dark version reskin
 - Added process reattach button
 - Fixed zeroing of the class when ReadProcessMemory can't read full buffer size
 
-# ReClassEx
+## ReClassEx
 
 ReClass Extended
 
 ![ReClassEx](https://raw.githubusercontent.com/dude719/ReClassEx/master/Images/reclass.png "ReClassEx")
 
-## New Features
+### New Features
 - Up and down arrow hotkeys to switch nodes
 - Delete hotkey to delete selected nodes
 - Delete icon to delete selected nodes
@@ -58,30 +63,30 @@ ReClass Extended
 ![Alt text](http://i.imgur.com/W6ytfG6.png "Automatic symbol resolving")
 ![Alt text](http://i.imgur.com/hBNyEFG.png "ReClass")
 
-## Current Release Download
+### Current Release Download
 
 [DOWNLOAD](https://github.com/dude719/Reclass-2016/releases)
 
-## How to build
+### How to build
 
 See wiki for instructions on how to compile:
 
 [Compilation Instructions](https://github.com/dude719/Reclass-2016/wiki/Compiling-ReClassEx)
 
-## Plugins
+### Plugins
 
 See wiki for the plugin API documentation:
 
 [Plugin Documentation](https://github.com/dude719/Reclass-2016/wiki/Creating-ReClass-plugins)
 
-## TODO
+### TODO
 - Optimize literally everything
 - Add highlighting to bytes that change
 - Add string and byte searching feature
 - Add a kernel driver for reading and writing memory from the kernel (Already done but IS NOT SAFE!)
 - Add debugger
 
-## Authors/Special Thanks
+### Authors/Special Thanks
 - DrUnKeN ChEeTaH
 - P47R!CK
 - DogMatt
