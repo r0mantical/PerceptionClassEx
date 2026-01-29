@@ -36,10 +36,8 @@ jobs:
     - name: Prepare Artifacts
       run: |
         mkdir artifacts
-        copy BIN\nothingtoseehere64.exe artifacts\ReClassEx64.exe
-        copy BIN\nothingtoseehere64.pdb artifacts\ReClassEx64.pdb
+        copy BIN\nothingtoseehere64.exe artifacts\Skibidi64.exe
         copy bin\plugins\TestPlugin.rc-plugin64 artifacts\TestPlugin64.rc-plugin
-        copy bin\plugins\TestPlugin64.pdb artifacts\TestPlugin64.pdb
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
