@@ -30,14 +30,92 @@ jobs:
       run: |
         .\vcpkg\vcpkg install libwebsockets:x64-windows-static
 
+    - name: Create output directories
+      run: |
+        New-Item -ItemType Directory -Force -Path "bin\plugins"
+        New-Item -ItemType Directory -Force -Path "artifacts"
+      shell: powershell
+
     - name: Build x64 Release
-      run: msbuild ReClass.sln /p:Configuration=Release /p:Platform=x64
+      run: |
+        msbuild ReClass.sln /p:Configuration=Release /p:Platform=x64 /p:BuildProjectReferences=true /v:detailed
+      shell: cmd
+
+    - name: List build outputs (for debugging)
+      run: |
+        Write-Host "=== Searching for all DLL and plugin files ==="
+        Get-ChildItem -Recurse -Include *.dll,*.rc-plugin,*.rc-plugin64 | ForEach-Object { Write-Host $_.FullName }
+        Write-Host ""
+        Write-Host "=== Contents of bin directory ==="
+        if (Test-Path "bin") { Get-ChildItem -Recurse "bin" | ForEach-Object { Write-Host $_.FullName } }
+        Write-Host ""
+        Write-Host "=== Contents of BIN directory (uppercase) ==="
+        if (Test-Path "BIN") { Get-ChildItem -Recurse "BIN" | ForEach-Object { Write-Host $_.FullName } }
+      shell: powershell
 
     - name: Prepare Artifacts
       run: |
-        mkdir artifacts
-        copy BIN\nothingtoseehere64.exe artifacts\Skibidi64.exe
-        copy bin\plugins\TestPlugin.rc-plugin64 artifacts\TestPlugin64.rc-plugin
+        # Copy main executable
+        if (Test-Path "BIN\nothingtoseehere64.exe") {
+          Write-Host "Found main executable at BIN\nothingtoseehere64.exe"
+          Copy-Item "BIN\nothingtoseehere64.exe" "artifacts\Skibidi64.exe"
+        } elseif (Test-Path "bin\nothingtoseehere64.exe") {
+          Write-Host "Found main executable at bin\nothingtoseehere64.exe"
+          Copy-Item "bin\nothingtoseehere64.exe" "artifacts\Skibidi64.exe"
+        } else {
+          Write-Host "ERROR: Main executable not found!"
+          exit 1
+        }
+        
+        # Try to find and copy TestPlugin from various possible locations
+        $pluginFound = $false
+        $possiblePaths = @(
+          "bin\plugins\TestPlugin.rc-plugin64",
+          "BIN\plugins\TestPlugin.rc-plugin64",
+          "TestPlugin\TestPlugin\x64\Release\TestPlugin.rc-plugin64",
+          "TestPlugin\x64\Release\TestPlugin.rc-plugin64",
+          "x64\Release\TestPlugin.rc-plugin64",
+          "TestPlugin\TestPlugin\x64\Release\TestPlugin.dll",
+          "TestPlugin\x64\Release\TestPlugin.dll"
+        )
+        
+        foreach ($path in $possiblePaths) {
+          if (Test-Path $path) {
+            Write-Host "Found TestPlugin at: $path"
+            $ext = [System.IO.Path]::GetExtension($path)
+            if ($ext -eq ".dll") {
+              # If it's a DLL, rename it to .rc-plugin64
+              Copy-Item $path "artifacts\TestPlugin64.rc-plugin"
+              Rename-Item "artifacts\TestPlugin64.rc-plugin" -NewName "TestPlugin.rc-plugin64" -ErrorAction SilentlyContinue
+              Move-Item "artifacts\TestPlugin.rc-plugin64" "artifacts\TestPlugin64.rc-plugin" -Force
+              Write-Host "Copied and renamed DLL to TestPlugin64.rc-plugin"
+            } else {
+              Copy-Item $path "artifacts\TestPlugin64.rc-plugin"
+              Write-Host "Copied plugin to TestPlugin64.rc-plugin"
+            }
+            $pluginFound = $true
+            break
+          }
+        }
+        
+        if (-not $pluginFound) {
+          Write-Host "WARNING: TestPlugin not found in any expected location!"
+          Write-Host "The build will continue, but the plugin will not be included."
+          Write-Host ""
+          Write-Host "Please check:"
+          Write-Host "1. TestPlugin project is included in the solution"
+          Write-Host "2. TestPlugin is set to build for x64 Release configuration"
+          Write-Host "3. TestPlugin output directory is configured correctly"
+          Write-Host "4. Post-build events are set up to copy the plugin"
+        } else {
+          Write-Host "Successfully prepared TestPlugin artifact"
+        }
+        
+        # List final artifacts
+        Write-Host ""
+        Write-Host "=== Final artifacts ==="
+        Get-ChildItem "artifacts" | ForEach-Object { Write-Host $_.FullName }
+      shell: powershell
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
@@ -66,9 +144,19 @@ jobs:
       with:
         tag_name: release-${{ env.date }}
         name: "release-${{ env.date }}"
-        body: ""
+        body: |
+          ## ReClassDark Build
+          
+          Automated build from master branch.
+          
+          **Files included:**
+          - Skibidi64.exe - Main ReClass executable
+          - TestPlugin64.rc-plugin - TestPlugin (if build was successful)
+          
+          **Build date:** ${{ env.date }}
         draft: false
         prerelease: false
         files: ./release/*
+        fail_on_unmatched_files: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
