@@ -3,6 +3,8 @@
 
 //#include <afxribbonbar.h> // Used for ribbon bar. comment this out if not used
 
+// COMMENTED OUT: We don't have the .lib files, so we'll load functions dynamically
+/*
 #ifdef _WIN64
 #ifdef _DEBUG
 #pragma comment(lib, "nothingtoseehere64_dbg.lib")
@@ -16,6 +18,7 @@
 #pragma comment(lib, "nothingtoseehere.lib")
 #endif
 #endif
+*/
 
 #define PLUGIN_CC __stdcall
 
@@ -89,184 +92,121 @@ PluginSettingsDlg(
     IN LPARAM lParam 
     );
 
-// 
-// Register, remove, get or check overrides for the read/write memory operations.
-// 
-BOOL 
-PLUGIN_CC 
-ReClassOverrideReadMemoryOperation( 
-    IN PPLUGIN_READ_MEMORY_OPERATION ReadMemoryOperation 
-    );
+// =============================================================================
+// DYNAMIC LOADING APPROACH - Functions loaded at runtime via GetProcAddress
+// =============================================================================
 
-BOOL 
-PLUGIN_CC 
-ReClassOverrideWriteMemoryOperation( 
-    IN PPLUGIN_WRITE_MEMORY_OPERATION WriteMemoryOperation 
-    );
+// Function pointers that will be loaded dynamically
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideReadMemoryOperation)(PPLUGIN_READ_MEMORY_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideWriteMemoryOperation)(PPLUGIN_WRITE_MEMORY_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideMemoryOperations)(PPLUGIN_READ_MEMORY_OPERATION, PPLUGIN_WRITE_MEMORY_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassRemoveReadMemoryOverride)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassRemoveWriteMemoryOverride)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassIsReadMemoryOverriden)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassIsWriteMemoryOverriden)(VOID);
+typedef PPLUGIN_READ_MEMORY_OPERATION (PLUGIN_CC *PFN_ReClassGetCurrentReadMemory)(VOID);
+typedef PPLUGIN_WRITE_MEMORY_OPERATION (PLUGIN_CC *PFN_ReClassGetCurrentWriteMemory)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideOpenProcessOperation)(PPLUGIN_OPEN_PROCESS_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideOpenThreadOperation)(PPLUGIN_OPEN_THREAD_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideHandleOperations)(PPLUGIN_OPEN_PROCESS_OPERATION, PPLUGIN_OPEN_THREAD_OPERATION);
+typedef BOOL (PLUGIN_CC *PFN_ReClassRemoveOpenProcessOverride)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassRemoveOpenThreadOverride)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassIsOpenProcessOverriden)(VOID);
+typedef BOOL (PLUGIN_CC *PFN_ReClassIsOpenThreadOverriden)(VOID);
+typedef PPLUGIN_OPEN_PROCESS_OPERATION (PLUGIN_CC *PFN_ReClassGetCurrentOpenProcess)(VOID);
+typedef PPLUGIN_OPEN_THREAD_OPERATION (PLUGIN_CC *PFN_ReClassGetCurrentOpenThread)(VOID);
+typedef VOID (PLUGIN_CC *PFN_ReClassPrintConsole)(const wchar_t*, ...);
+typedef HANDLE (PLUGIN_CC *PFN_ReClassGetProcessHandle)(VOID);
+typedef DWORD (PLUGIN_CC *PFN_ReClassGetProcessId)(VOID);
+typedef HWND (PLUGIN_CC *PFN_ReClassMainWindow)(VOID);
 
-BOOL 
-PLUGIN_CC 
-ReClassOverrideMemoryOperations( 
-    IN PPLUGIN_READ_MEMORY_OPERATION ReadMemoryOperation, 
-    IN PPLUGIN_WRITE_MEMORY_OPERATION WriteMemoryOperation 
-    );
+// Global function pointers
+static PFN_ReClassOverrideReadMemoryOperation g_ReClassOverrideReadMemoryOperation = nullptr;
+static PFN_ReClassOverrideWriteMemoryOperation g_ReClassOverrideWriteMemoryOperation = nullptr;
+static PFN_ReClassOverrideMemoryOperations g_ReClassOverrideMemoryOperations = nullptr;
+static PFN_ReClassRemoveReadMemoryOverride g_ReClassRemoveReadMemoryOverride = nullptr;
+static PFN_ReClassRemoveWriteMemoryOverride g_ReClassRemoveWriteMemoryOverride = nullptr;
+static PFN_ReClassIsReadMemoryOverriden g_ReClassIsReadMemoryOverriden = nullptr;
+static PFN_ReClassIsWriteMemoryOverriden g_ReClassIsWriteMemoryOverriden = nullptr;
+static PFN_ReClassGetCurrentReadMemory g_ReClassGetCurrentReadMemory = nullptr;
+static PFN_ReClassGetCurrentWriteMemory g_ReClassGetCurrentWriteMemory = nullptr;
+static PFN_ReClassOverrideOpenProcessOperation g_ReClassOverrideOpenProcessOperation = nullptr;
+static PFN_ReClassOverrideOpenThreadOperation g_ReClassOverrideOpenThreadOperation = nullptr;
+static PFN_ReClassOverrideHandleOperations g_ReClassOverrideHandleOperations = nullptr;
+static PFN_ReClassRemoveOpenProcessOverride g_ReClassRemoveOpenProcessOverride = nullptr;
+static PFN_ReClassRemoveOpenThreadOverride g_ReClassRemoveOpenThreadOverride = nullptr;
+static PFN_ReClassIsOpenProcessOverriden g_ReClassIsOpenProcessOverriden = nullptr;
+static PFN_ReClassIsOpenThreadOverriden g_ReClassIsOpenThreadOverriden = nullptr;
+static PFN_ReClassGetCurrentOpenProcess g_ReClassGetCurrentOpenProcess = nullptr;
+static PFN_ReClassGetCurrentOpenThread g_ReClassGetCurrentOpenThread = nullptr;
+static PFN_ReClassPrintConsole g_ReClassPrintConsole = nullptr;
+static PFN_ReClassGetProcessHandle g_ReClassGetProcessHandle = nullptr;
+static PFN_ReClassGetProcessId g_ReClassGetProcessId = nullptr;
+static PFN_ReClassMainWindow g_ReClassMainWindow = nullptr;
 
+// Load all ReClass API functions
+static inline BOOL LoadReClassAPI()
+{
+    static BOOL loaded = FALSE;
+    if (loaded) return TRUE;
 
-BOOL 
-PLUGIN_CC 
-ReClassRemoveReadMemoryOverride( 
-    VOID 
-    );
+    HMODULE hReClass = GetModuleHandleW(nullptr);
+    if (!hReClass) return FALSE;
 
-BOOL 
-PLUGIN_CC 
-ReClassRemoveWriteMemoryOverride( 
-    VOID 
-    );
+    #define LOAD_FUNC(name) g_##name = (PFN_##name)GetProcAddress(hReClass, #name)
 
+    LOAD_FUNC(ReClassOverrideReadMemoryOperation);
+    LOAD_FUNC(ReClassOverrideWriteMemoryOperation);
+    LOAD_FUNC(ReClassOverrideMemoryOperations);
+    LOAD_FUNC(ReClassRemoveReadMemoryOverride);
+    LOAD_FUNC(ReClassRemoveWriteMemoryOverride);
+    LOAD_FUNC(ReClassIsReadMemoryOverriden);
+    LOAD_FUNC(ReClassIsWriteMemoryOverriden);
+    LOAD_FUNC(ReClassGetCurrentReadMemory);
+    LOAD_FUNC(ReClassGetCurrentWriteMemory);
+    LOAD_FUNC(ReClassOverrideOpenProcessOperation);
+    LOAD_FUNC(ReClassOverrideOpenThreadOperation);
+    LOAD_FUNC(ReClassOverrideHandleOperations);
+    LOAD_FUNC(ReClassRemoveOpenProcessOverride);
+    LOAD_FUNC(ReClassRemoveOpenThreadOverride);
+    LOAD_FUNC(ReClassIsOpenProcessOverriden);
+    LOAD_FUNC(ReClassIsOpenThreadOverriden);
+    LOAD_FUNC(ReClassGetCurrentOpenProcess);
+    LOAD_FUNC(ReClassGetCurrentOpenThread);
+    LOAD_FUNC(ReClassPrintConsole);
+    LOAD_FUNC(ReClassGetProcessHandle);
+    LOAD_FUNC(ReClassGetProcessId);
+    LOAD_FUNC(ReClassMainWindow);
 
-BOOL 
-PLUGIN_CC 
-ReClassIsReadMemoryOverriden( 
-    VOID 
-    );
+    #undef LOAD_FUNC
 
-BOOL 
-PLUGIN_CC 
-ReClassIsWriteMemoryOverriden( 
-    VOID 
-    );
+    loaded = TRUE;
+    return TRUE;
+}
 
-
-PPLUGIN_READ_MEMORY_OPERATION 
-PLUGIN_CC 
-ReClassGetCurrentReadMemory( 
-    VOID 
-    );
-
-PPLUGIN_WRITE_MEMORY_OPERATION 
-PLUGIN_CC 
-ReClassGetCurrentWriteMemory( 
-    VOID 
-    );
-
-// 
-// Register, remove, get or check overrides for the opening of handles 
-// for various process/thread operations.
-// 
-BOOL
-PLUGIN_CC
-ReClassOverrideOpenProcessOperation( 
-    IN PPLUGIN_OPEN_PROCESS_OPERATION OpenProcessOperation 
-    );
-
-BOOL
-PLUGIN_CC
-ReClassOverrideOpenThreadOperation( 
-    IN PPLUGIN_OPEN_THREAD_OPERATION OpenThreadOperation 
-    );
-
-BOOL
-PLUGIN_CC
-ReClassOverrideHandleOperations( 
-    IN PPLUGIN_OPEN_PROCESS_OPERATION OpenProcessOperation, 
-    IN PPLUGIN_OPEN_THREAD_OPERATION OpenThreadOperation 
-    );
-
-
-BOOL
-PLUGIN_CC
-ReClassRemoveOpenProcessOverride( 
-    VOID 
-    );
-
-BOOL
-PLUGIN_CC
-ReClassRemoveOpenThreadOverride( 
-    VOID 
-    );
-
-
-BOOL 
-PLUGIN_CC 
-ReClassIsOpenProcessOverriden( 
-    VOID 
-    );
-
-BOOL 
-PLUGIN_CC 
-ReClassIsOpenThreadOverriden( 
-    VOID 
-    );
-
-
-PPLUGIN_OPEN_PROCESS_OPERATION 
-PLUGIN_CC 
-ReClassGetCurrentOpenProcess( 
-    VOID 
-    );
-
-PPLUGIN_OPEN_THREAD_OPERATION 
-PLUGIN_CC 
-ReClassGetCurrentOpenThread( 
-    VOID 
-    );
-
-// 
-// Print text to the ReClass console window
-// 
-VOID 
-PLUGIN_CC 
-ReClassPrintConsole( 
-    IN const wchar_t *Format, 
-    ... 
-    );
-
-// 
-// Gets the current attached process handle, null if not attached
-// 
-HANDLE 
-PLUGIN_CC 
-ReClassGetProcessHandle( 
-    VOID 
-    );
-
-// 
-// Gets the current attached process ID, 0 if not attached
-// 
-DWORD 
-PLUGIN_CC 
-ReClassGetProcessId( 
-    VOID 
-    );
-
-// 
-// Return the main window handle for ReClass
-// 
-HWND 
-PLUGIN_CC 
-ReClassMainWindow( 
-    VOID 
-    );
-
-#ifdef _MFC_VER 
-// 
-// Get the ribbon interface for MFC (useful for adding custom buttons and such)
-// 
-CMFCRibbonBar* 
-PLUGIN_CC 
-ReClassRibbonInterface( 
-    VOID 
-    );
-#endif
-
-
-//
-// Class Manipulation
-//
-// TODO: Implement this.
-// 
-
+// Wrapper macros to call loaded functions
+#define ReClassOverrideReadMemoryOperation(...) (LoadReClassAPI(), g_ReClassOverrideReadMemoryOperation ? g_ReClassOverrideReadMemoryOperation(__VA_ARGS__) : FALSE)
+#define ReClassOverrideWriteMemoryOperation(...) (LoadReClassAPI(), g_ReClassOverrideWriteMemoryOperation ? g_ReClassOverrideWriteMemoryOperation(__VA_ARGS__) : FALSE)
+#define ReClassOverrideMemoryOperations(...) (LoadReClassAPI(), g_ReClassOverrideMemoryOperations ? g_ReClassOverrideMemoryOperations(__VA_ARGS__) : FALSE)
+#define ReClassRemoveReadMemoryOverride(...) (LoadReClassAPI(), g_ReClassRemoveReadMemoryOverride ? g_ReClassRemoveReadMemoryOverride(__VA_ARGS__) : FALSE)
+#define ReClassRemoveWriteMemoryOverride(...) (LoadReClassAPI(), g_ReClassRemoveWriteMemoryOverride ? g_ReClassRemoveWriteMemoryOverride(__VA_ARGS__) : FALSE)
+#define ReClassIsReadMemoryOverriden(...) (LoadReClassAPI(), g_ReClassIsReadMemoryOverriden ? g_ReClassIsReadMemoryOverriden(__VA_ARGS__) : FALSE)
+#define ReClassIsWriteMemoryOverriden(...) (LoadReClassAPI(), g_ReClassIsWriteMemoryOverriden ? g_ReClassIsWriteMemoryOverriden(__VA_ARGS__) : FALSE)
+#define ReClassGetCurrentReadMemory(...) (LoadReClassAPI(), g_ReClassGetCurrentReadMemory ? g_ReClassGetCurrentReadMemory(__VA_ARGS__) : nullptr)
+#define ReClassGetCurrentWriteMemory(...) (LoadReClassAPI(), g_ReClassGetCurrentWriteMemory ? g_ReClassGetCurrentWriteMemory(__VA_ARGS__) : nullptr)
+#define ReClassOverrideOpenProcessOperation(...) (LoadReClassAPI(), g_ReClassOverrideOpenProcessOperation ? g_ReClassOverrideOpenProcessOperation(__VA_ARGS__) : FALSE)
+#define ReClassOverrideOpenThreadOperation(...) (LoadReClassAPI(), g_ReClassOverrideOpenThreadOperation ? g_ReClassOverrideOpenThreadOperation(__VA_ARGS__) : FALSE)
+#define ReClassOverrideHandleOperations(...) (LoadReClassAPI(), g_ReClassOverrideHandleOperations ? g_ReClassOverrideHandleOperations(__VA_ARGS__) : FALSE)
+#define ReClassRemoveOpenProcessOverride(...) (LoadReClassAPI(), g_ReClassRemoveOpenProcessOverride ? g_ReClassRemoveOpenProcessOverride(__VA_ARGS__) : FALSE)
+#define ReClassRemoveOpenThreadOverride(...) (LoadReClassAPI(), g_ReClassRemoveOpenThreadOverride ? g_ReClassRemoveOpenThreadOverride(__VA_ARGS__) : FALSE)
+#define ReClassIsOpenProcessOverriden(...) (LoadReClassAPI(), g_ReClassIsOpenProcessOverriden ? g_ReClassIsOpenProcessOverriden(__VA_ARGS__) : FALSE)
+#define ReClassIsOpenThreadOverriden(...) (LoadReClassAPI(), g_ReClassIsOpenThreadOverriden ? g_ReClassIsOpenThreadOverriden(__VA_ARGS__) : FALSE)
+#define ReClassGetCurrentOpenProcess(...) (LoadReClassAPI(), g_ReClassGetCurrentOpenProcess ? g_ReClassGetCurrentOpenProcess(__VA_ARGS__) : nullptr)
+#define ReClassGetCurrentOpenThread(...) (LoadReClassAPI(), g_ReClassGetCurrentOpenThread ? g_ReClassGetCurrentOpenThread(__VA_ARGS__) : nullptr)
+#define ReClassPrintConsole(...) (LoadReClassAPI(), g_ReClassPrintConsole ? g_ReClassPrintConsole(__VA_ARGS__) : (void)0)
+#define ReClassGetProcessHandle(...) (LoadReClassAPI(), g_ReClassGetProcessHandle ? g_ReClassGetProcessHandle(__VA_ARGS__) : nullptr)
+#define ReClassGetProcessId(...) (LoadReClassAPI(), g_ReClassGetProcessId ? g_ReClassGetProcessId(__VA_ARGS__) : 0)
+#define ReClassMainWindow(...) (LoadReClassAPI(), g_ReClassMainWindow ? g_ReClassMainWindow(__VA_ARGS__) : nullptr)
 
 
 #endif // _RECLASS_API_H_
