@@ -96,7 +96,7 @@ PluginSettingsDlg(
 // DYNAMIC LOADING APPROACH - Functions loaded at runtime via GetProcAddress
 // =============================================================================
 
-// Function pointers that will be loaded dynamically
+// Function pointer types
 typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideReadMemoryOperation)(PPLUGIN_READ_MEMORY_OPERATION);
 typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideWriteMemoryOperation)(PPLUGIN_WRITE_MEMORY_OPERATION);
 typedef BOOL (PLUGIN_CC *PFN_ReClassOverrideMemoryOperations)(PPLUGIN_READ_MEMORY_OPERATION, PPLUGIN_WRITE_MEMORY_OPERATION);
@@ -120,7 +120,7 @@ typedef HANDLE (PLUGIN_CC *PFN_ReClassGetProcessHandle)(VOID);
 typedef DWORD (PLUGIN_CC *PFN_ReClassGetProcessId)(VOID);
 typedef HWND (PLUGIN_CC *PFN_ReClassMainWindow)(VOID);
 
-// Global function pointers
+// Global function pointers (in header because of inline functions)
 static PFN_ReClassOverrideReadMemoryOperation g_ReClassOverrideReadMemoryOperation = nullptr;
 static PFN_ReClassOverrideWriteMemoryOperation g_ReClassOverrideWriteMemoryOperation = nullptr;
 static PFN_ReClassOverrideMemoryOperations g_ReClassOverrideMemoryOperations = nullptr;
@@ -184,29 +184,123 @@ static inline BOOL LoadReClassAPI()
     return TRUE;
 }
 
-// Wrapper macros to call loaded functions
-#define ReClassOverrideReadMemoryOperation(...) (LoadReClassAPI(), g_ReClassOverrideReadMemoryOperation ? g_ReClassOverrideReadMemoryOperation(__VA_ARGS__) : FALSE)
-#define ReClassOverrideWriteMemoryOperation(...) (LoadReClassAPI(), g_ReClassOverrideWriteMemoryOperation ? g_ReClassOverrideWriteMemoryOperation(__VA_ARGS__) : FALSE)
-#define ReClassOverrideMemoryOperations(...) (LoadReClassAPI(), g_ReClassOverrideMemoryOperations ? g_ReClassOverrideMemoryOperations(__VA_ARGS__) : FALSE)
-#define ReClassRemoveReadMemoryOverride(...) (LoadReClassAPI(), g_ReClassRemoveReadMemoryOverride ? g_ReClassRemoveReadMemoryOverride(__VA_ARGS__) : FALSE)
-#define ReClassRemoveWriteMemoryOverride(...) (LoadReClassAPI(), g_ReClassRemoveWriteMemoryOverride ? g_ReClassRemoveWriteMemoryOverride(__VA_ARGS__) : FALSE)
-#define ReClassIsReadMemoryOverriden(...) (LoadReClassAPI(), g_ReClassIsReadMemoryOverriden ? g_ReClassIsReadMemoryOverriden(__VA_ARGS__) : FALSE)
-#define ReClassIsWriteMemoryOverriden(...) (LoadReClassAPI(), g_ReClassIsWriteMemoryOverriden ? g_ReClassIsWriteMemoryOverriden(__VA_ARGS__) : FALSE)
-#define ReClassGetCurrentReadMemory(...) (LoadReClassAPI(), g_ReClassGetCurrentReadMemory ? g_ReClassGetCurrentReadMemory(__VA_ARGS__) : nullptr)
-#define ReClassGetCurrentWriteMemory(...) (LoadReClassAPI(), g_ReClassGetCurrentWriteMemory ? g_ReClassGetCurrentWriteMemory(__VA_ARGS__) : nullptr)
-#define ReClassOverrideOpenProcessOperation(...) (LoadReClassAPI(), g_ReClassOverrideOpenProcessOperation ? g_ReClassOverrideOpenProcessOperation(__VA_ARGS__) : FALSE)
-#define ReClassOverrideOpenThreadOperation(...) (LoadReClassAPI(), g_ReClassOverrideOpenThreadOperation ? g_ReClassOverrideOpenThreadOperation(__VA_ARGS__) : FALSE)
-#define ReClassOverrideHandleOperations(...) (LoadReClassAPI(), g_ReClassOverrideHandleOperations ? g_ReClassOverrideHandleOperations(__VA_ARGS__) : FALSE)
-#define ReClassRemoveOpenProcessOverride(...) (LoadReClassAPI(), g_ReClassRemoveOpenProcessOverride ? g_ReClassRemoveOpenProcessOverride(__VA_ARGS__) : FALSE)
-#define ReClassRemoveOpenThreadOverride(...) (LoadReClassAPI(), g_ReClassRemoveOpenThreadOverride ? g_ReClassRemoveOpenThreadOverride(__VA_ARGS__) : FALSE)
-#define ReClassIsOpenProcessOverriden(...) (LoadReClassAPI(), g_ReClassIsOpenProcessOverriden ? g_ReClassIsOpenProcessOverriden(__VA_ARGS__) : FALSE)
-#define ReClassIsOpenThreadOverriden(...) (LoadReClassAPI(), g_ReClassIsOpenThreadOverriden ? g_ReClassIsOpenThreadOverriden(__VA_ARGS__) : FALSE)
-#define ReClassGetCurrentOpenProcess(...) (LoadReClassAPI(), g_ReClassGetCurrentOpenProcess ? g_ReClassGetCurrentOpenProcess(__VA_ARGS__) : nullptr)
-#define ReClassGetCurrentOpenThread(...) (LoadReClassAPI(), g_ReClassGetCurrentOpenThread ? g_ReClassGetCurrentOpenThread(__VA_ARGS__) : nullptr)
-#define ReClassPrintConsole(...) (LoadReClassAPI(), g_ReClassPrintConsole ? g_ReClassPrintConsole(__VA_ARGS__) : (void)0)
-#define ReClassGetProcessHandle(...) (LoadReClassAPI(), g_ReClassGetProcessHandle ? g_ReClassGetProcessHandle(__VA_ARGS__) : nullptr)
-#define ReClassGetProcessId(...) (LoadReClassAPI(), g_ReClassGetProcessId ? g_ReClassGetProcessId(__VA_ARGS__) : 0)
-#define ReClassMainWindow(...) (LoadReClassAPI(), g_ReClassMainWindow ? g_ReClassMainWindow(__VA_ARGS__) : nullptr)
+// Inline wrapper functions
+static inline BOOL ReClassOverrideReadMemoryOperation(PPLUGIN_READ_MEMORY_OPERATION op) {
+    LoadReClassAPI();
+    return g_ReClassOverrideReadMemoryOperation ? g_ReClassOverrideReadMemoryOperation(op) : FALSE;
+}
 
+static inline BOOL ReClassOverrideWriteMemoryOperation(PPLUGIN_WRITE_MEMORY_OPERATION op) {
+    LoadReClassAPI();
+    return g_ReClassOverrideWriteMemoryOperation ? g_ReClassOverrideWriteMemoryOperation(op) : FALSE;
+}
+
+static inline BOOL ReClassOverrideMemoryOperations(PPLUGIN_READ_MEMORY_OPERATION rop, PPLUGIN_WRITE_MEMORY_OPERATION wop) {
+    LoadReClassAPI();
+    return g_ReClassOverrideMemoryOperations ? g_ReClassOverrideMemoryOperations(rop, wop) : FALSE;
+}
+
+static inline BOOL ReClassRemoveReadMemoryOverride() {
+    LoadReClassAPI();
+    return g_ReClassRemoveReadMemoryOverride ? g_ReClassRemoveReadMemoryOverride() : FALSE;
+}
+
+static inline BOOL ReClassRemoveWriteMemoryOverride() {
+    LoadReClassAPI();
+    return g_ReClassRemoveWriteMemoryOverride ? g_ReClassRemoveWriteMemoryOverride() : FALSE;
+}
+
+static inline BOOL ReClassIsReadMemoryOverriden() {
+    LoadReClassAPI();
+    return g_ReClassIsReadMemoryOverriden ? g_ReClassIsReadMemoryOverriden() : FALSE;
+}
+
+static inline BOOL ReClassIsWriteMemoryOverriden() {
+    LoadReClassAPI();
+    return g_ReClassIsWriteMemoryOverriden ? g_ReClassIsWriteMemoryOverriden() : FALSE;
+}
+
+static inline PPLUGIN_READ_MEMORY_OPERATION ReClassGetCurrentReadMemory() {
+    LoadReClassAPI();
+    return g_ReClassGetCurrentReadMemory ? g_ReClassGetCurrentReadMemory() : nullptr;
+}
+
+static inline PPLUGIN_WRITE_MEMORY_OPERATION ReClassGetCurrentWriteMemory() {
+    LoadReClassAPI();
+    return g_ReClassGetCurrentWriteMemory ? g_ReClassGetCurrentWriteMemory() : nullptr;
+}
+
+static inline BOOL ReClassOverrideOpenProcessOperation(PPLUGIN_OPEN_PROCESS_OPERATION op) {
+    LoadReClassAPI();
+    return g_ReClassOverrideOpenProcessOperation ? g_ReClassOverrideOpenProcessOperation(op) : FALSE;
+}
+
+static inline BOOL ReClassOverrideOpenThreadOperation(PPLUGIN_OPEN_THREAD_OPERATION op) {
+    LoadReClassAPI();
+    return g_ReClassOverrideOpenThreadOperation ? g_ReClassOverrideOpenThreadOperation(op) : FALSE;
+}
+
+static inline BOOL ReClassOverrideHandleOperations(PPLUGIN_OPEN_PROCESS_OPERATION pop, PPLUGIN_OPEN_THREAD_OPERATION top) {
+    LoadReClassAPI();
+    return g_ReClassOverrideHandleOperations ? g_ReClassOverrideHandleOperations(pop, top) : FALSE;
+}
+
+static inline BOOL ReClassRemoveOpenProcessOverride() {
+    LoadReClassAPI();
+    return g_ReClassRemoveOpenProcessOverride ? g_ReClassRemoveOpenProcessOverride() : FALSE;
+}
+
+static inline BOOL ReClassRemoveOpenThreadOverride() {
+    LoadReClassAPI();
+    return g_ReClassRemoveOpenThreadOverride ? g_ReClassRemoveOpenThreadOverride() : FALSE;
+}
+
+static inline BOOL ReClassIsOpenProcessOverriden() {
+    LoadReClassAPI();
+    return g_ReClassIsOpenProcessOverriden ? g_ReClassIsOpenProcessOverriden() : FALSE;
+}
+
+static inline BOOL ReClassIsOpenThreadOverriden() {
+    LoadReClassAPI();
+    return g_ReClassIsOpenThreadOverriden ? g_ReClassIsOpenThreadOverriden() : FALSE;
+}
+
+static inline PPLUGIN_OPEN_PROCESS_OPERATION ReClassGetCurrentOpenProcess() {
+    LoadReClassAPI();
+    return g_ReClassGetCurrentOpenProcess ? g_ReClassGetCurrentOpenProcess() : nullptr;
+}
+
+static inline PPLUGIN_OPEN_THREAD_OPERATION ReClassGetCurrentOpenThread() {
+    LoadReClassAPI();
+    return g_ReClassGetCurrentOpenThread ? g_ReClassGetCurrentOpenThread() : nullptr;
+}
+
+static inline VOID ReClassPrintConsole(const wchar_t* fmt, ...) {
+    LoadReClassAPI();
+    if (g_ReClassPrintConsole) {
+        va_list args;
+        va_start(args, fmt);
+        // Call with format string and args
+        wchar_t buffer[2048];
+        vswprintf_s(buffer, 2048, fmt, args);
+        g_ReClassPrintConsole(L"%s", buffer);
+        va_end(args);
+    }
+}
+
+static inline HANDLE ReClassGetProcessHandle() {
+    LoadReClassAPI();
+    return g_ReClassGetProcessHandle ? g_ReClassGetProcessHandle() : nullptr;
+}
+
+static inline DWORD ReClassGetProcessId() {
+    LoadReClassAPI();
+    return g_ReClassGetProcessId ? g_ReClassGetProcessId() : 0;
+}
+
+static inline HWND ReClassMainWindow() {
+    LoadReClassAPI();
+    return g_ReClassMainWindow ? g_ReClassMainWindow() : nullptr;
+}
 
 #endif // _RECLASS_API_H_
