@@ -37,12 +37,15 @@ jobs:
       run: |
         mkdir artifacts
         copy BIN\nothingtoseehere64.exe artifacts\ReClassEx64.exe
+        copy BIN\nothingtoseehere64.pdb artifacts\ReClassEx64.pdb
+        copy bin\plugins\TestPlugin.rc-plugin64 artifacts\TestPlugin64.rc-plugin
+        copy bin\plugins\TestPlugin64.pdb artifacts\TestPlugin64.pdb
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ReClassDark-Binaries
-        path: artifacts\*.exe
+        path: artifacts\*
 
   release:
     needs: build
@@ -68,6 +71,6 @@ jobs:
         body: ""
         draft: false
         prerelease: false
-        files: ./release/*.exe
+        files: ./release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
