@@ -29,19 +29,14 @@ jobs:
     - name: Install dependencies
       run: |
         .\vcpkg\vcpkg install libwebsockets:x64-windows-static
-        .\vcpkg\vcpkg install libwebsockets:x86-windows-static
 
     - name: Build x64 Release
       run: msbuild ReClass.sln /p:Configuration=Release /p:Platform=x64
-
-    - name: Build Win32 Release
-      run: msbuild ReClass.sln /p:Configuration=Release /p:Platform=Win32
 
     - name: Prepare Artifacts
       run: |
         mkdir artifacts
         copy BIN\nothingtoseehere64.exe artifacts\ReClassEx64.exe
-        copy BIN\nothingtoseehere.exe artifacts\ReClassEx.exe
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
